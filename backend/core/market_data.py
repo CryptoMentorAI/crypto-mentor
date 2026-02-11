@@ -6,7 +6,7 @@ from typing import Optional
 
 import ccxt.async_support as ccxt
 import pandas as pd
-import pandas_ta as ta
+import ta as ta_lib
 
 from backend.core.config import settings
 
@@ -114,39 +114,61 @@ class MarketDataEngine:
 
     def _add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add all technical indicators to the dataframe."""
-        # RSI
-        df["rsi"] = ta.rsi(df["close"], length=14)
+        n = len(df)
 
-        # MACD
-        macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
-        if macd is not None:
-            df["macd"] = macd.iloc[:, 0]
-            df["macd_histogram"] = macd.iloc[:, 1]
-            df["macd_signal"] = macd.iloc[:, 2]
+        # RSI (needs ~15 rows)
+        if n >= 15:
+            df["rsi"] = ta_lib.momentum.RSIIndicator(df["close"], window=14).rsi()
+        else:
+            df["rsi"] = 50.0
+
+        # MACD (needs ~27 rows)
+        if n >= 27:
+            macd_ind = ta_lib.trend.MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
+            df["macd"] = macd_ind.macd()
+            df["macd_histogram"] = macd_ind.macd_diff()
+            df["macd_signal"] = macd_ind.macd_signal()
+        else:
+            df["macd"] = 0.0
+            df["macd_histogram"] = 0.0
+            df["macd_signal"] = 0.0
 
         # EMAs
-        df["ema_9"] = ta.ema(df["close"], length=9)
-        df["ema_21"] = ta.ema(df["close"], length=21)
-        df["ema_50"] = ta.ema(df["close"], length=50)
-        df["ema_200"] = ta.ema(df["close"], length=200)
+        for period, col in [(9, "ema_9"), (21, "ema_21"), (50, "ema_50"), (200, "ema_200")]:
+            if n >= period:
+                df[col] = ta_lib.trend.EMAIndicator(df["close"], window=period).ema_indicator()
+            else:
+                df[col] = df["close"]
 
-        # Bollinger Bands
-        bbands = ta.bbands(df["close"], length=20, std=2)
-        if bbands is not None:
-            df["bb_lower"] = bbands.iloc[:, 0]
-            df["bb_middle"] = bbands.iloc[:, 1]
-            df["bb_upper"] = bbands.iloc[:, 2]
+        # Bollinger Bands (needs ~20 rows)
+        if n >= 20:
+            bb = ta_lib.volatility.BollingerBands(df["close"], window=20, window_dev=2)
+            df["bb_lower"] = bb.bollinger_lband()
+            df["bb_middle"] = bb.bollinger_mavg()
+            df["bb_upper"] = bb.bollinger_hband()
+        else:
+            df["bb_lower"] = df["close"] * 0.98
+            df["bb_middle"] = df["close"]
+            df["bb_upper"] = df["close"] * 1.02
 
-        # ATR (Average True Range)
-        df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+        # ATR (needs ~15 rows)
+        if n >= 15:
+            df["atr"] = ta_lib.volatility.AverageTrueRange(
+                df["high"], df["low"], df["close"], window=14
+            ).average_true_range()
+        else:
+            df["atr"] = (df["high"] - df["low"]).mean()
 
-        # ADX (Average Directional Index)
-        adx = ta.adx(df["high"], df["low"], df["close"], length=14)
-        if adx is not None:
-            df["adx"] = adx.iloc[:, 0]
+        # ADX (needs ~28 rows)
+        if n >= 28:
+            df["adx"] = ta_lib.trend.ADXIndicator(
+                df["high"], df["low"], df["close"], window=14
+            ).adx()
+        else:
+            df["adx"] = 20.0
 
         # Volume SMA
-        df["vol_sma"] = ta.sma(df["volume"], length=20)
+        df["vol_sma"] = df["volume"].rolling(window=min(20, n)).mean()
 
         return df
 

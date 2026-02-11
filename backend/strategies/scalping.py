@@ -49,8 +49,8 @@ class ScalpingStrategy(BaseStrategy):
         # ─── Quick RSI (period 7 for scalping) ──
 
         # Calculate quick RSI from raw data
-        import pandas_ta as ta
-        quick_rsi = ta.rsi(df["close"], length=self.params["rsi_period"])
+        import ta as ta_lib
+        quick_rsi = ta_lib.momentum.RSIIndicator(df["close"], window=self.params["rsi_period"]).rsi()
         if quick_rsi is not None and len(quick_rsi) > 0:
             qrsi = round(quick_rsi.iloc[-1], 2) if not pd.isna(quick_rsi.iloc[-1]) else 50
 
