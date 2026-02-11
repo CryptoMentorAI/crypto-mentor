@@ -5,6 +5,7 @@ import {
   createChart,
   IChartApi,
   ISeriesApi,
+  IPriceLine,
   CandlestickData,
   LineData,
   Time,
@@ -75,6 +76,7 @@ export default function Chart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const lineSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+  const priceLinesRef = useRef<IPriceLine[]>([]);
 
   const [activeOverlays, setActiveOverlays] = useState<Set<OverlayKey>>(() => {
     const defaults = new Set<OverlayKey>();
@@ -237,10 +239,20 @@ export default function Chart({
       addLine("bb_lower", overlays.bb_lower, "rgba(139,148,158,0.5)", 1, LineStyle.Dotted);
     }
 
+    // ─── Clear old price lines ──────────
+    for (const pl of priceLinesRef.current) {
+      try {
+        candleSeries.removePriceLine(pl);
+      } catch {
+        // ignore
+      }
+    }
+    priceLinesRef.current = [];
+
     // ─── Support Lines (green) ──────────
     if (activeOverlays.has("support") && srLevels.length > 0) {
       for (const level of srLevels.filter((l) => l.type === "support")) {
-        candleSeries.createPriceLine({
+        const pl = candleSeries.createPriceLine({
           price: level.price,
           color: "#00c853",
           lineWidth: level.strength >= 3 ? 2 : 1,
@@ -248,13 +260,14 @@ export default function Chart({
           axisLabelVisible: true,
           title: `S $${level.price.toLocaleString()} (${level.touches}x)`,
         });
+        priceLinesRef.current.push(pl);
       }
     }
 
     // ─── Resistance Lines (red) ──────────
     if (activeOverlays.has("resistance") && srLevels.length > 0) {
       for (const level of srLevels.filter((l) => l.type === "resistance")) {
-        candleSeries.createPriceLine({
+        const pl = candleSeries.createPriceLine({
           price: level.price,
           color: "#ff1744",
           lineWidth: level.strength >= 3 ? 2 : 1,
@@ -262,6 +275,7 @@ export default function Chart({
           axisLabelVisible: true,
           title: `R $${level.price.toLocaleString()} (${level.touches}x)`,
         });
+        priceLinesRef.current.push(pl);
       }
     }
 
