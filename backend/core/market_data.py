@@ -227,28 +227,27 @@ class MarketDataEngine:
     def find_sr_levels(self, df: pd.DataFrame, num_levels: int = 5) -> list[dict]:
         """
         Find multiple support/resistance levels using pivot points.
-        Returns list of {price, type, strength, touches} sorted by strength.
+        Returns list of {price, type, strength, touches} sorted by price.
+        Guarantees a mix of support (below price) and resistance (above price).
         """
         if len(df) < 20:
             return []
 
-        levels = []
         highs = df["high"].values
         lows = df["low"].values
         closes = df["close"].values
-        current_price = closes[-1]
+        current_price = float(closes[-1])
 
         # Find pivot highs and pivot lows (local extremes)
+        raw_levels: list[float] = []
         window = 5
         for i in range(window, len(df) - window):
-            # Pivot high — resistance candidate
             if highs[i] == max(highs[i - window : i + window + 1]):
-                levels.append({"price": round(float(highs[i]), 2), "type": "resistance"})
-            # Pivot low — support candidate
+                raw_levels.append(round(float(highs[i]), 2))
             if lows[i] == min(lows[i - window : i + window + 1]):
-                levels.append({"price": round(float(lows[i]), 2), "type": "support"})
+                raw_levels.append(round(float(lows[i]), 2))
 
-        if not levels:
+        if not raw_levels:
             return []
 
         # Cluster nearby levels (within 0.5% of each other)
@@ -256,24 +255,21 @@ class MarketDataEngine:
         used = set()
         threshold = current_price * 0.005
 
-        for i, level in enumerate(levels):
+        for i, price in enumerate(raw_levels):
             if i in used:
                 continue
-            cluster = [level["price"]]
-            cluster_type = level["type"]
+            cluster = [price]
             used.add(i)
-
-            for j, other in enumerate(levels):
+            for j, other_price in enumerate(raw_levels):
                 if j in used:
                     continue
-                if abs(level["price"] - other["price"]) < threshold:
-                    cluster.append(other["price"])
+                if abs(price - other_price) < threshold:
+                    cluster.append(other_price)
                     used.add(j)
 
             avg_price = round(sum(cluster) / len(cluster), 2)
             touches = len(cluster)
-
-            # Determine type based on position relative to current price
+            # Type is purely based on position relative to current price
             sr_type = "support" if avg_price < current_price else "resistance"
 
             clustered.append({
@@ -283,9 +279,69 @@ class MarketDataEngine:
                 "touches": touches,
             })
 
-        # Sort by strength (most touches = strongest) and take top N
-        clustered.sort(key=lambda x: x["strength"], reverse=True)
-        return clustered[:num_levels]
+        supports = sorted([c for c in clustered if c["type"] == "support"],
+                          key=lambda x: x["strength"], reverse=True)
+        resistances = sorted([c for c in clustered if c["type"] == "resistance"],
+                             key=lambda x: x["strength"], reverse=True)
+
+        # If not enough supports, synthesize from recent lows or percentages
+        min_per_side = num_levels // 2
+        if len(supports) < min_per_side:
+            need = min_per_side - len(supports)
+            below_lows = sorted(set(round(float(v), 2) for v in lows[-80:] if float(v) < current_price))
+            if len(below_lows) >= 2:
+                low_min, low_max = below_lows[0], below_lows[-1]
+                spread = low_max - low_min
+                if spread > current_price * 0.001:
+                    step = spread / (need + 1)
+                    for i in range(need):
+                        lp = round(low_min + step * (i + 1), 2)
+                        supports.append({"price": lp, "type": "support", "strength": 1, "touches": 1})
+                else:
+                    for pct in [0.005, 0.01, 0.02][:need]:
+                        supports.append({"price": round(current_price * (1 - pct), 2), "type": "support", "strength": 1, "touches": 1})
+            else:
+                for pct in [0.005, 0.01, 0.02][:need]:
+                    supports.append({"price": round(current_price * (1 - pct), 2), "type": "support", "strength": 1, "touches": 1})
+            supports.sort(key=lambda x: x["price"], reverse=True)
+
+        # If not enough resistances, synthesize similarly
+        if len(resistances) < min_per_side:
+            need = min_per_side - len(resistances)
+            above_highs = sorted(set(round(float(v), 2) for v in highs[-80:] if float(v) > current_price), reverse=True)
+            if len(above_highs) >= 2:
+                high_max, high_min = above_highs[0], above_highs[-1]
+                spread = high_max - high_min
+                if spread > current_price * 0.001:
+                    step = spread / (need + 1)
+                    for i in range(need):
+                        hp = round(high_min + step * (i + 1), 2)
+                        resistances.append({"price": hp, "type": "resistance", "strength": 1, "touches": 1})
+                else:
+                    for pct in [0.005, 0.01, 0.02][:need]:
+                        resistances.append({"price": round(current_price * (1 + pct), 2), "type": "resistance", "strength": 1, "touches": 1})
+            else:
+                for pct in [0.005, 0.01, 0.02][:need]:
+                    resistances.append({"price": round(current_price * (1 + pct), 2), "type": "resistance", "strength": 1, "touches": 1})
+            resistances.sort(key=lambda x: x["price"])
+
+        # Pick balanced mix: at least 2 of each side if possible
+        half = num_levels // 2
+        n_support = min(half, len(supports)) if supports else 0
+        n_resistance = min(num_levels - n_support, len(resistances)) if resistances else 0
+        # Fill remaining with the other side
+        if n_support + n_resistance < num_levels:
+            extra = num_levels - n_support - n_resistance
+            if len(supports) > n_support:
+                add_s = min(extra, len(supports) - n_support)
+                n_support += add_s
+                extra -= add_s
+            if len(resistances) > n_resistance:
+                n_resistance += min(extra, len(resistances) - n_resistance)
+
+        result = supports[:n_support] + resistances[:n_resistance]
+        result.sort(key=lambda x: x["price"])
+        return result
 
     # ─── Paginated Fetch ─────────────────────────────────
 
