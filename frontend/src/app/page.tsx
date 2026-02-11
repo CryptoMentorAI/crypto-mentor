@@ -48,6 +48,15 @@ interface Candle {
   volume: number;
 }
 
+const TIMEFRAMES = [
+  { value: "1m", label: "1m" },
+  { value: "5m", label: "5m" },
+  { value: "15m", label: "15m" },
+  { value: "1h", label: "1H" },
+  { value: "4h", label: "4H" },
+  { value: "1d", label: "1D" },
+];
+
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -57,6 +66,7 @@ export default function Dashboard() {
     explanation: unknown;
     postAnalysis: unknown;
   } | null>(null);
+  const [timeframe, setTimeframe] = useState("15m");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +75,6 @@ export default function Dashboard() {
     wsClient.connect();
 
     wsClient.on("price_update", () => {
-      // Refresh dashboard on price update
       loadData();
     });
 
@@ -73,20 +82,20 @@ export default function Dashboard() {
       loadData();
     });
 
-    // Refresh every 30 seconds
     const interval = setInterval(loadData, 30000);
 
     return () => {
       clearInterval(interval);
       wsClient.disconnect();
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeframe]);
 
   async function loadData() {
     try {
       const [dashData, candleData] = await Promise.all([
         getDashboard(),
-        getCandles({ limit: 100 }),
+        getCandles({ timeframe, limit: 500 }),
       ]);
       setDashboard(dashData);
       setCandles(candleData.candles);
@@ -170,6 +179,23 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Chart + Trade Log (2/3) */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Timeframe Selector */}
+          <div className="flex items-center gap-1 bg-bg-secondary rounded-lg p-1 w-fit">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf.value}
+                onClick={() => setTimeframe(tf.value)}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition ${
+                  timeframe === tf.value
+                    ? "bg-accent-blue text-white"
+                    : "text-gray-400 hover:text-white hover:bg-bg-tertiary"
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
+
           <Chart
             candles={candles}
             markers={tradeMarkers}

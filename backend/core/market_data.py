@@ -12,33 +12,59 @@ from backend.core.config import settings
 
 
 class MarketDataEngine:
-    """Fetch and manage market data from Bybit or mock data."""
+    """Fetch and manage market data from Binance (real) or mock."""
 
     def __init__(self):
-        self.exchange: Optional[ccxt.bybit] = None
+        self.exchange: Optional[ccxt.Exchange] = None
+        self.trade_exchange: Optional[ccxt.Exchange] = None  # For paper trading (Bybit testnet)
         self.mock_mode = settings.MOCK_MODE
-        self._mock_price = 67500.0  # Starting BTC price for mock
+        self._mock_price = 67500.0
         self._mock_base_time = datetime.now(timezone.utc)
         self._candle_cache: dict[str, pd.DataFrame] = {}
         self._price_listeners: list = []
 
     async def initialize(self):
-        """Connect to Bybit testnet or setup mock mode."""
-        if not self.mock_mode and settings.is_bybit_configured:
-            self.exchange = ccxt.bybit({
+        """Connect to exchange for real market data (free public API)."""
+        # Try multiple exchanges in order — first one that works wins
+        exchanges_to_try = [
+            ("okx", lambda: ccxt.okx({"options": {"defaultType": "spot"}})),
+            ("bybit", lambda: ccxt.bybit({"options": {"defaultType": "spot"}})),
+            ("binance", lambda: ccxt.binance({"options": {"defaultType": "spot"}})),
+        ]
+
+        for name, create_fn in exchanges_to_try:
+            try:
+                exchange = create_fn()
+                ticker = await exchange.fetch_ticker("BTC/USDT")
+                self.exchange = exchange
+                self.mock_mode = False
+                print(f"Connected to {name.upper()} — REAL BTC price: ${ticker['last']:,.2f}")
+                break
+            except Exception as e:
+                print(f"{name} failed: {e}")
+                try:
+                    await exchange.close()
+                except Exception:
+                    pass
+
+        if self.mock_mode:
+            print("All exchanges failed — using mock data")
+
+        # Also connect to Bybit testnet if configured (for paper trading)
+        if settings.is_bybit_configured:
+            self.trade_exchange = ccxt.bybit({
                 "apiKey": settings.BYBIT_API_KEY,
                 "secret": settings.BYBIT_API_SECRET,
-                "sandbox": True,  # Testnet mode
+                "sandbox": True,
                 "options": {"defaultType": "spot"},
             })
-            print("Connected to Bybit Testnet")
-        else:
-            self.mock_mode = True
-            print("Running in mock data mode")
+            print("Bybit Testnet connected for paper trading")
 
     async def close(self):
         if self.exchange:
             await self.exchange.close()
+        if self.trade_exchange:
+            await self.trade_exchange.close()
 
     def add_price_listener(self, callback):
         self._price_listeners.append(callback)
@@ -54,11 +80,15 @@ class MarketDataEngine:
 
     async def get_current_price(self, pair: str = None) -> float:
         pair = pair or settings.DEFAULT_PAIR
-        if self.mock_mode:
+        if self.mock_mode or not self.exchange:
             return self._generate_mock_price()
 
-        ticker = await self.exchange.fetch_ticker(pair)
-        return ticker["last"]
+        try:
+            ticker = await self.exchange.fetch_ticker(pair)
+            return ticker["last"]
+        except Exception as e:
+            print(f"Price fetch error: {e}")
+            return self._generate_mock_price()
 
     async def get_candles(
         self, pair: str = None, timeframe: str = None, limit: int = 200
@@ -69,14 +99,18 @@ class MarketDataEngine:
 
         cache_key = f"{pair}_{timeframe}"
 
-        if self.mock_mode:
+        if self.mock_mode or not self.exchange:
             df = self._generate_mock_candles(limit, timeframe)
         else:
-            ohlcv = await self.exchange.fetch_ohlcv(pair, timeframe, limit=limit)
-            df = pd.DataFrame(
-                ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
-            )
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            try:
+                ohlcv = await self._fetch_ohlcv_paginated(pair, timeframe, limit)
+                df = pd.DataFrame(
+                    ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
+                )
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            except Exception as e:
+                print(f"Candle fetch error: {e}, using mock")
+                df = self._generate_mock_candles(limit, timeframe)
 
         # Calculate technical indicators
         df = self._add_indicators(df)
@@ -252,6 +286,45 @@ class MarketDataEngine:
         # Sort by strength (most touches = strongest) and take top N
         clustered.sort(key=lambda x: x["strength"], reverse=True)
         return clustered[:num_levels]
+
+    # ─── Paginated Fetch ─────────────────────────────────
+
+    async def _fetch_ohlcv_paginated(self, pair: str, timeframe: str, limit: int) -> list:
+        """Fetch more candles by paginating backwards."""
+        per_request = 300
+        tf_ms = self._timeframe_to_minutes(timeframe) * 60 * 1000
+
+        # First batch: latest candles
+        all_data = await self.exchange.fetch_ohlcv(pair, timeframe, limit=min(per_request, limit))
+        if not all_data:
+            return []
+
+        # Page backwards for more data
+        max_pages = 5
+        for _ in range(max_pages):
+            if len(all_data) >= limit:
+                break
+            earliest_ts = all_data[0][0]
+            since = earliest_ts - (per_request * tf_ms)
+            batch = await self.exchange.fetch_ohlcv(pair, timeframe, since=since, limit=per_request)
+            if not batch:
+                break
+            # Only keep candles older than what we have
+            older = [c for c in batch if c[0] < earliest_ts]
+            if not older:
+                break
+            all_data = older + all_data
+
+        # Deduplicate and trim
+        seen = set()
+        deduped = []
+        for row in all_data:
+            if row[0] not in seen:
+                seen.add(row[0])
+                deduped.append(row)
+        deduped.sort(key=lambda x: x[0])
+
+        return deduped[-limit:]
 
     # ─── Mock Data Generation ────────────────────────────
 

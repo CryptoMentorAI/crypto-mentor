@@ -58,7 +58,8 @@ const OVERLAY_CONFIGS = {
   ema_50: { label: "EMA 50", color: "#bc8cff", default: false },
   ema_200: { label: "EMA 200", color: "#f85149", default: false },
   bb: { label: "Bollinger", color: "#8b949e", default: true },
-  sr: { label: "S/R Levels", color: "#3fb950", default: true },
+  support: { label: "Support", color: "#00c853", default: true },
+  resistance: { label: "Resistance", color: "#ff1744", default: true },
 };
 
 type OverlayKey = keyof typeof OVERLAY_CONFIGS;
@@ -156,13 +157,15 @@ export default function Chart({
 
     // Trade markers
     if (markers.length > 0) {
-      const markerData = markers.map((m) => ({
-        time: (new Date(m.time).getTime() / 1000) as Time,
-        position: m.side === "BUY" ? ("belowBar" as const) : ("aboveBar" as const),
-        color: m.side === "BUY" ? "#3fb950" : "#f85149",
-        shape: m.side === "BUY" ? ("arrowUp" as const) : ("arrowDown" as const),
-        text: m.side,
-      }));
+      const markerData = markers
+        .map((m) => ({
+          time: (new Date(m.time).getTime() / 1000) as Time,
+          position: m.side === "BUY" ? ("belowBar" as const) : ("aboveBar" as const),
+          color: m.side === "BUY" ? "#3fb950" : "#f85149",
+          shape: m.side === "BUY" ? ("arrowUp" as const) : ("arrowDown" as const),
+          text: m.side,
+        }))
+        .sort((a, b) => (a.time as number) - (b.time as number));
       candleSeries.setMarkers(markerData);
     }
 
@@ -234,21 +237,30 @@ export default function Chart({
       addLine("bb_lower", overlays.bb_lower, "rgba(139,148,158,0.5)", 1, LineStyle.Dotted);
     }
 
-    // ─── Support/Resistance Lines ──────────
-    if (activeOverlays.has("sr") && srLevels.length > 0) {
-      for (const level of srLevels) {
-        const color =
-          level.type === "support"
-            ? `rgba(63,185,80,${0.3 + level.strength * 0.14})`
-            : `rgba(248,81,73,${0.3 + level.strength * 0.14})`;
-
+    // ─── Support Lines (green) ──────────
+    if (activeOverlays.has("support") && srLevels.length > 0) {
+      for (const level of srLevels.filter((l) => l.type === "support")) {
         candleSeries.createPriceLine({
           price: level.price,
-          color,
+          color: "#00c853",
           lineWidth: level.strength >= 3 ? 2 : 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: `${level.type === "support" ? "S" : "R"} (${level.touches}x)`,
+          title: `S $${level.price.toLocaleString()} (${level.touches}x)`,
+        });
+      }
+    }
+
+    // ─── Resistance Lines (red) ──────────
+    if (activeOverlays.has("resistance") && srLevels.length > 0) {
+      for (const level of srLevels.filter((l) => l.type === "resistance")) {
+        candleSeries.createPriceLine({
+          price: level.price,
+          color: "#ff1744",
+          lineWidth: level.strength >= 3 ? 2 : 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `R $${level.price.toLocaleString()} (${level.touches}x)`,
         });
       }
     }
