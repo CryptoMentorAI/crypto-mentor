@@ -71,11 +71,14 @@ export default function Dashboard() {
   const [timeframe, setTimeframe] = useState("15m");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [latestTick, setLatestTick] = useState<{ price: number; timestamp: string } | null>(null);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
     wsClient.connect();
 
+    // Full refetch on bot scan (strategy signals, trades)
     wsClient.on("price_update", () => {
       loadData();
     });
@@ -84,10 +87,20 @@ export default function Dashboard() {
       loadData();
     });
 
-    const interval = setInterval(loadData, 30000);
+    // Real-time tick — update chart live without refetch
+    const onTick = (data: unknown) => {
+      const tick = data as { price: number; timestamp: string };
+      setLatestTick(tick);
+      setLivePrice(tick.price);
+    };
+    wsClient.on("tick_update", onTick);
+
+    // Reduced full refetch interval (ticks handle live movement)
+    const interval = setInterval(loadData, 60000);
 
     return () => {
       clearInterval(interval);
+      wsClient.off("tick_update", onTick);
       wsClient.disconnect();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

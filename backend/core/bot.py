@@ -42,6 +42,19 @@ class TradingBot:
 
         await market_data.initialize()
 
+        # Start real-time price stream (OKX WebSocket → frontend)
+        async def _on_tick(pair, price, timestamp):
+            await self._broadcast("tick_update", {
+                "pair": pair,
+                "price": price,
+                "timestamp": timestamp,
+            })
+
+        market_data.add_price_listener(_on_tick)
+        self._stream_task = asyncio.create_task(
+            market_data.start_realtime_stream(self.pair)
+        )
+
         cycle = 0
         while self.running:
             try:
@@ -97,6 +110,8 @@ class TradingBot:
 
     async def stop(self):
         self.running = False
+        if hasattr(self, "_stream_task"):
+            self._stream_task.cancel()
         await market_data.close()
 
 

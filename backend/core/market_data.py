@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 import time
 from datetime import datetime, timezone, timedelta
@@ -7,6 +8,7 @@ from typing import Optional
 import ccxt.async_support as ccxt
 import pandas as pd
 import ta as ta_lib
+import websockets
 
 from backend.core.config import settings
 
@@ -22,6 +24,8 @@ class MarketDataEngine:
         self._mock_base_time = datetime.now(timezone.utc)
         self._candle_cache: dict[str, pd.DataFrame] = {}
         self._price_listeners: list = []
+        self._live_price: float = 0.0
+        self._last_broadcast: float = 0
 
     async def initialize(self):
         """Connect to exchange for real market data (free public API)."""
@@ -430,20 +434,48 @@ class MarketDataEngine:
         }
         return mapping.get(tf, 15)
 
-    # ─── Price Stream (for real-time updates) ─────────────
+    # ─── Real-Time Price Stream (OKX WebSocket) ──────────
 
-    async def stream_prices(self, pair: str = None, interval: float = 5.0):
-        """Stream price updates — mock or real."""
+    async def start_realtime_stream(self, pair: str = None):
+        """Connect to OKX public WebSocket for real-time tick streaming.
+        Free API — no key needed. Sends ~1 update/sec to frontend."""
         pair = pair or settings.DEFAULT_PAIR
+        okx_inst = pair.replace("/", "-")  # BTC/USDT → BTC-USDT
+        ws_url = "wss://ws.okx.com:8443/ws/v5/public"
 
         while True:
             try:
-                price = await self.get_current_price(pair)
-                ts = datetime.now(timezone.utc).isoformat()
-                await self._notify_price(pair, price, ts)
+                async with websockets.connect(ws_url, ping_interval=20) as ws:
+                    # Subscribe to ticker channel
+                    await ws.send(json.dumps({
+                        "op": "subscribe",
+                        "args": [{"channel": "tickers", "instId": okx_inst}]
+                    }))
+                    print(f"OKX WebSocket connected — streaming {okx_inst}")
+
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if "data" not in msg or not msg["data"]:
+                            continue
+
+                        tick = msg["data"][0]
+                        price = float(tick["last"])
+                        self._live_price = price
+                        ts = datetime.now(timezone.utc).isoformat()
+
+                        # Throttle: broadcast at most once per second
+                        now = time.time()
+                        if now - self._last_broadcast >= 1.0:
+                            self._last_broadcast = now
+                            await self._notify_price(pair, price, ts)
+
             except Exception as e:
-                print(f"Price stream error: {e}")
-            await asyncio.sleep(interval)
+                print(f"OKX WS error: {e}, reconnecting in 3s...")
+                await asyncio.sleep(3)
 
 
 # Singleton instance

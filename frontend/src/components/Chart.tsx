@@ -45,12 +45,18 @@ interface Overlays {
   timestamps: string[];
 }
 
+interface TickUpdate {
+  price: number;
+  timestamp: string;
+}
+
 interface ChartProps {
   candles: Candle[];
   markers?: TradeMarker[];
   overlays?: Overlays;
   srLevels?: SRLevel[];
   height?: number;
+  latestTick?: TickUpdate | null;
 }
 
 const OVERLAY_CONFIGS = {
@@ -76,12 +82,14 @@ const Chart = forwardRef<ChartHandle, ChartProps>(function Chart({
   overlays,
   srLevels = [],
   height = 500,
+  latestTick,
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const lineSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const lastCandleRef = useRef<{ time: Time; open: number; high: number; low: number; close: number } | null>(null);
 
   const [activeOverlays, setActiveOverlays] = useState<Set<OverlayKey>>(() => {
     const defaults = new Set<OverlayKey>();
@@ -176,6 +184,12 @@ const Chart = forwardRef<ChartHandle, ChartProps>(function Chart({
       close: c.close,
     }));
     candleSeries.setData(chartData);
+
+    // Track the last candle for live tick updates
+    if (chartData.length > 0) {
+      const last = chartData[chartData.length - 1];
+      lastCandleRef.current = { ...last };
+    }
 
     // Trade markers
     if (markers.length > 0) {
@@ -301,6 +315,23 @@ const Chart = forwardRef<ChartHandle, ChartProps>(function Chart({
 
     chart.timeScale().fitContent();
   }, [candles, markers, overlays, srLevels, activeOverlays]);
+
+  // ─── Live tick update (real-time candle movement) ────
+  useEffect(() => {
+    if (!latestTick || !seriesRef.current || !lastCandleRef.current) return;
+
+    const lc = lastCandleRef.current;
+    const updated = {
+      time: lc.time,
+      open: lc.open,
+      high: Math.max(lc.high, latestTick.price),
+      low: Math.min(lc.low, latestTick.price),
+      close: latestTick.price,
+    };
+
+    seriesRef.current.update(updated);
+    lastCandleRef.current = updated;
+  }, [latestTick]);
 
   return (
     <div className="card p-0 overflow-hidden">
