@@ -51,6 +51,8 @@ interface Candle {
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [overlays, setOverlays] = useState<Record<string, unknown> | null>(null);
+  const [srLevels, setSrLevels] = useState<{ price: number; type: "support" | "resistance"; strength: number; touches: number }[]>([]);
   const [selectedExplanation, setSelectedExplanation] = useState<{
     explanation: unknown;
     postAnalysis: unknown;
@@ -88,6 +90,8 @@ export default function Dashboard() {
       ]);
       setDashboard(dashData);
       setCandles(candleData.candles);
+      setOverlays(candleData.overlays || null);
+      setSrLevels(candleData.sr_levels || []);
       setError(null);
     } catch (err) {
       setError("Tak dapat connect ke backend. Pastikan server dah start.");
@@ -166,7 +170,13 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Chart + Trade Log (2/3) */}
         <div className="lg:col-span-2 space-y-4">
-          <Chart candles={candles} markers={tradeMarkers} height={400} />
+          <Chart
+            candles={candles}
+            markers={tradeMarkers}
+            overlays={overlays as Parameters<typeof Chart>[0]["overlays"]}
+            srLevels={srLevels}
+            height={500}
+          />
 
           {/* Open Trades */}
           {dashboard.open_trades.length > 0 && (

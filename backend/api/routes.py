@@ -151,18 +151,50 @@ async def get_candles(
     timeframe: str = None,
     limit: int = Query(default=100, le=500),
 ):
-    """Get OHLCV candle data for charting."""
+    """Get OHLCV candle data for charting with indicator overlays."""
     pair = pair or settings.DEFAULT_PAIR
     timeframe = timeframe or settings.DEFAULT_TIMEFRAME
 
     df = await market_data.get_candles(pair, timeframe, limit)
-    candles = df[["timestamp", "open", "high", "low", "close", "volume"]].to_dict("records")
 
-    # Convert timestamps to ISO strings
+    candles = df[["timestamp", "open", "high", "low", "close", "volume"]].to_dict("records")
     for c in candles:
         c["timestamp"] = c["timestamp"].isoformat() if hasattr(c["timestamp"], "isoformat") else str(c["timestamp"])
 
-    return {"pair": pair, "timeframe": timeframe, "candles": candles}
+    # Build overlay data for chart drawing
+    def _safe(series):
+        """Convert series to list, replacing NaN with None."""
+        return [None if (v is None or (isinstance(v, float) and v != v)) else round(v, 2) for v in series]
+
+    timestamps = [c["timestamp"] for c in candles]
+
+    overlays = {
+        "ema_9": _safe(df["ema_9"]) if "ema_9" in df.columns else [],
+        "ema_21": _safe(df["ema_21"]) if "ema_21" in df.columns else [],
+        "ema_50": _safe(df["ema_50"]) if "ema_50" in df.columns else [],
+        "ema_200": _safe(df["ema_200"]) if "ema_200" in df.columns else [],
+        "bb_upper": _safe(df["bb_upper"]) if "bb_upper" in df.columns else [],
+        "bb_middle": _safe(df["bb_middle"]) if "bb_middle" in df.columns else [],
+        "bb_lower": _safe(df["bb_lower"]) if "bb_lower" in df.columns else [],
+        "timestamps": timestamps,
+    }
+
+    # Support/Resistance levels
+    support = market_data._find_support(df)
+    resistance = market_data._find_resistance(df)
+
+    # Find multiple S/R levels
+    sr_levels = market_data.find_sr_levels(df)
+
+    return {
+        "pair": pair,
+        "timeframe": timeframe,
+        "candles": candles,
+        "overlays": overlays,
+        "support": support,
+        "resistance": resistance,
+        "sr_levels": sr_levels,
+    }
 
 
 @router.get("/market/indicators")

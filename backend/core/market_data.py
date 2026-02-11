@@ -190,6 +190,69 @@ class MarketDataEngine:
         idx = max(0, len(sorted_highs) // 10)
         return round(sorted_highs[idx], 2)
 
+    def find_sr_levels(self, df: pd.DataFrame, num_levels: int = 5) -> list[dict]:
+        """
+        Find multiple support/resistance levels using pivot points.
+        Returns list of {price, type, strength, touches} sorted by strength.
+        """
+        if len(df) < 20:
+            return []
+
+        levels = []
+        highs = df["high"].values
+        lows = df["low"].values
+        closes = df["close"].values
+        current_price = closes[-1]
+
+        # Find pivot highs and pivot lows (local extremes)
+        window = 5
+        for i in range(window, len(df) - window):
+            # Pivot high — resistance candidate
+            if highs[i] == max(highs[i - window : i + window + 1]):
+                levels.append({"price": round(float(highs[i]), 2), "type": "resistance"})
+            # Pivot low — support candidate
+            if lows[i] == min(lows[i - window : i + window + 1]):
+                levels.append({"price": round(float(lows[i]), 2), "type": "support"})
+
+        if not levels:
+            return []
+
+        # Cluster nearby levels (within 0.5% of each other)
+        clustered = []
+        used = set()
+        threshold = current_price * 0.005
+
+        for i, level in enumerate(levels):
+            if i in used:
+                continue
+            cluster = [level["price"]]
+            cluster_type = level["type"]
+            used.add(i)
+
+            for j, other in enumerate(levels):
+                if j in used:
+                    continue
+                if abs(level["price"] - other["price"]) < threshold:
+                    cluster.append(other["price"])
+                    used.add(j)
+
+            avg_price = round(sum(cluster) / len(cluster), 2)
+            touches = len(cluster)
+
+            # Determine type based on position relative to current price
+            sr_type = "support" if avg_price < current_price else "resistance"
+
+            clustered.append({
+                "price": avg_price,
+                "type": sr_type,
+                "strength": min(5, touches),
+                "touches": touches,
+            })
+
+        # Sort by strength (most touches = strongest) and take top N
+        clustered.sort(key=lambda x: x["strength"], reverse=True)
+        return clustered[:num_levels]
+
     # ─── Mock Data Generation ────────────────────────────
 
     def _generate_mock_price(self) -> float:
