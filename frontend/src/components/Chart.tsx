@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import {
   createChart,
   IChartApi,
@@ -65,13 +65,18 @@ const OVERLAY_CONFIGS = {
 
 type OverlayKey = keyof typeof OVERLAY_CONFIGS;
 
-export default function Chart({
+export interface ChartHandle {
+  toggleOverlay: (key: string) => void;
+  ensureOverlay: (key: string) => void;
+}
+
+const Chart = forwardRef<ChartHandle, ChartProps>(function Chart({
   candles,
   markers = [],
   overlays,
   srLevels = [],
   height = 500,
-}: ChartProps) {
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -94,6 +99,21 @@ export default function Chart({
       return next;
     });
   }, []);
+
+  // Ensure overlay is ON (don't toggle off if already on)
+  const ensureOverlay = useCallback((key: OverlayKey) => {
+    setActiveOverlays((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    toggleOverlay: (key: string) => toggleOverlay(key as OverlayKey),
+    ensureOverlay: (key: string) => ensureOverlay(key as OverlayKey),
+  }), [toggleOverlay, ensureOverlay]);
 
   // Create chart once
   useEffect(() => {
@@ -319,4 +339,6 @@ export default function Chart({
       <div ref={containerRef} />
     </div>
   );
-}
+});
+
+export default Chart;

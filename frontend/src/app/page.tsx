@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Chart from "@/components/Chart";
+import { useEffect, useState, useRef, useCallback } from "react";
+import Chart, { ChartHandle } from "@/components/Chart";
 import PortfolioStats from "@/components/PortfolioStats";
 import TradeLog from "@/components/TradeLog";
 import ExplanationCard from "@/components/ExplanationCard";
+import MarketInsight from "@/components/MarketInsight";
 import { getDashboard, getCandles, getTradeDetail } from "@/lib/api";
 import wsClient from "@/lib/websocket";
 
@@ -58,6 +59,7 @@ const TIMEFRAMES = [
 ];
 
 export default function Dashboard() {
+  const chartComponentRef = useRef<ChartHandle>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [overlays, setOverlays] = useState<Record<string, unknown> | null>(null);
@@ -109,6 +111,14 @@ export default function Dashboard() {
       setLoading(false);
     }
   }
+
+  const handleShowOverlay = useCallback((overlay: string) => {
+    if (chartComponentRef.current) {
+      chartComponentRef.current.ensureOverlay(overlay);
+      // Scroll chart into view
+      document.querySelector("[data-chart]")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, []);
 
   async function handleTradeClick(tradeId: number) {
     try {
@@ -196,13 +206,16 @@ export default function Dashboard() {
             ))}
           </div>
 
-          <Chart
-            candles={candles}
-            markers={tradeMarkers}
-            overlays={overlays as Parameters<typeof Chart>[0]["overlays"]}
-            srLevels={srLevels}
-            height={500}
-          />
+          <div data-chart>
+            <Chart
+              ref={chartComponentRef}
+              candles={candles}
+              markers={tradeMarkers}
+              overlays={overlays as Parameters<typeof Chart>[0]["overlays"]}
+              srLevels={srLevels}
+              height={500}
+            />
+          </div>
 
           {/* Open Trades */}
           {dashboard.open_trades.length > 0 && (
@@ -221,8 +234,15 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Explanation Panel (1/3) */}
+        {/* Right Panel (1/3) */}
         <div className="space-y-4">
+          {/* Market Insight — live analysis linked to chart */}
+          <MarketInsight
+            timeframe={timeframe}
+            onToggleOverlay={handleShowOverlay}
+          />
+
+          {/* Trade Explanation */}
           <ExplanationCard
             explanation={selectedExplanation?.explanation as Parameters<typeof ExplanationCard>[0]["explanation"]}
             postAnalysis={selectedExplanation?.postAnalysis as Parameters<typeof ExplanationCard>[0]["postAnalysis"]}
@@ -232,9 +252,9 @@ export default function Dashboard() {
           <div className="card">
             <h3 className="font-semibold mb-3 text-accent-yellow">Tips</h3>
             <div className="space-y-2 text-sm text-gray-400">
-              <p>Klik mana-mana trade untuk tengok explanation kenapa bot buat keputusan tu.</p>
+              <p>Klik insight di atas untuk belajar, tekan &quot;Tunjuk kat Chart&quot; untuk highlight indicator.</p>
               <p>Bot scan market setiap minit dan cari confluence dari 4 strategy berbeza.</p>
-              <p>Pergi ke <a href="/learn" className="text-accent-blue hover:underline">Belajar</a> untuk faham setiap indicator.</p>
+              <p>Pergi ke <a href="/learn" className="text-accent-blue hover:underline">Belajar</a> untuk faham lagi detail setiap indicator.</p>
             </div>
           </div>
         </div>

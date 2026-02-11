@@ -30,6 +30,9 @@ export const getCandles = (params?: {
 export const getIndicators = () =>
   api.get("/market/indicators").then((r) => r.data);
 
+export const getMarketAnalysis = (params?: { timeframe?: string }) =>
+  api.get("/market/analysis", { params }).then((r) => r.data);
+
 // ─── Strategies ────────────────────────────
 export const getStrategies = () =>
   api.get("/strategies").then((r) => r.data);

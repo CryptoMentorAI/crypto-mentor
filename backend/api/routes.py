@@ -204,6 +204,221 @@ async def get_indicators(pair: str = None, timeframe: str = None):
     return indicators
 
 
+@router.get("/market/analysis")
+async def get_market_analysis(pair: str = None, timeframe: str = None):
+    """Real-time market analysis with educational insights in Bahasa Melayu."""
+    ind = await market_data.get_indicators(pair, timeframe)
+    price = ind["price"]
+    insights = []
+
+    # ─── RSI Analysis ─────────────────────
+    rsi = ind["rsi"]
+    if rsi <= 30:
+        insights.append({
+            "indicator": "RSI",
+            "value": rsi,
+            "signal": "bullish",
+            "overlay": "ema_9",
+            "title": f"RSI Oversold ({rsi})",
+            "text": f"RSI di bawah 30 — market dah oversold. Ramai seller dah exhausted, kemungkinan besar harga akan bounce naik. Ini macam rubber band yang dah stretch terlalu banyak ke bawah.",
+            "tip": "Jangan terus buy — tunggu confirmation macam bullish candle atau RSI mula naik balik atas 30.",
+        })
+    elif rsi >= 70:
+        insights.append({
+            "indicator": "RSI",
+            "value": rsi,
+            "signal": "bearish",
+            "overlay": "ema_9",
+            "title": f"RSI Overbought ({rsi})",
+            "text": f"RSI atas 70 — market dah overbought. Buyer dah terlalu excited, harga mungkin akan pullback turun. Macam kereta yang laju sangat, kena brake.",
+            "tip": "Ini bukan signal jual terus — tapi jangan beli sekarang. Tunggu RSI turun bawah 70 dulu.",
+        })
+    else:
+        zone = "neutral"
+        desc = "seimbang"
+        if rsi > 55:
+            zone = "mild_bullish"
+            desc = "sedikit bullish"
+        elif rsi < 45:
+            zone = "mild_bearish"
+            desc = "sedikit bearish"
+        insights.append({
+            "indicator": "RSI",
+            "value": rsi,
+            "signal": zone,
+            "overlay": "ema_9",
+            "title": f"RSI {desc.title()} ({rsi})",
+            "text": f"RSI kat {rsi} — zone {desc}. Takde extreme signal sekarang. Market bergerak normal.",
+            "tip": "RSI paling berguna bila dia masuk zone extreme (bawah 30 atau atas 70).",
+        })
+
+    # ─── EMA Trend Analysis ───────────────
+    ema9, ema21, ema50 = ind["ema_9"], ind["ema_21"], ind["ema_50"]
+    if ema9 > ema21 > ema50:
+        insights.append({
+            "indicator": "EMA",
+            "value": f"{ema9}/{ema21}/{ema50}",
+            "signal": "bullish",
+            "overlay": "ema_9",
+            "title": "EMA Bullish Alignment",
+            "text": f"EMA 9 ({ema9:,.0f}) > EMA 21 ({ema21:,.0f}) > EMA 50 ({ema50:,.0f}) — semua moving average beratur naik. Ini tanda uptrend yang kuat.",
+            "tip": "Dalam uptrend, harga biasanya bounce dari EMA 21 atau EMA 50. Kalau harga touch EMA 21 dan bounce — itu potential buy zone.",
+        })
+    elif ema9 < ema21 < ema50:
+        insights.append({
+            "indicator": "EMA",
+            "value": f"{ema9}/{ema21}/{ema50}",
+            "signal": "bearish",
+            "overlay": "ema_9",
+            "title": "EMA Bearish Alignment",
+            "text": f"EMA 9 ({ema9:,.0f}) < EMA 21 ({ema21:,.0f}) < EMA 50 ({ema50:,.0f}) — semua MA beratur turun. Market dalam downtrend.",
+            "tip": "Dalam downtrend, elakkan buy. Tunggu EMA 9 cross atas EMA 21 (Golden Cross) sebelum consider entry.",
+        })
+    else:
+        insights.append({
+            "indicator": "EMA",
+            "value": f"{ema9}/{ema21}/{ema50}",
+            "signal": "neutral",
+            "overlay": "ema_9",
+            "title": "EMA Mixed Signal",
+            "text": f"EMA tak beratur — market dalam sideways/choppy zone. EMA 9: {ema9:,.0f}, EMA 21: {ema21:,.0f}, EMA 50: {ema50:,.0f}.",
+            "tip": "Bila EMA bersilang-silang, market tak ada clear trend. Baik tunggu dia settle dulu sebelum trade.",
+        })
+
+    # ─── MACD ─────────────────────────────
+    macd_val = ind["macd"]
+    macd_sig = ind["macd_signal"]
+    macd_hist = ind["macd_histogram"]
+    if macd_val > macd_sig and macd_hist > 0:
+        insights.append({
+            "indicator": "MACD",
+            "value": round(macd_hist, 2),
+            "signal": "bullish",
+            "overlay": "ema_21",
+            "title": "MACD Bullish Momentum",
+            "text": f"MACD line atas signal line — momentum bullish. Histogram: +{macd_hist:.2f}. Macam enjin kereta yang sedang pick up speed.",
+            "tip": "MACD bullish + RSI tak overbought = setup yang bagus untuk buy.",
+        })
+    elif macd_val < macd_sig and macd_hist < 0:
+        insights.append({
+            "indicator": "MACD",
+            "value": round(macd_hist, 2),
+            "signal": "bearish",
+            "overlay": "ema_21",
+            "title": "MACD Bearish Momentum",
+            "text": f"MACD line bawah signal line — momentum bearish. Histogram: {macd_hist:.2f}. Seller masih kuat, harga mungkin terus turun.",
+            "tip": "Kalau MACD histogram makin kecil (kurang negatif), itu tanda seller dah mula lemah — potential reversal.",
+        })
+
+    # ─── Bollinger Bands ──────────────────
+    bb_upper, bb_lower = ind["bb_upper"], ind["bb_lower"]
+    bb_width_pct = round(((bb_upper - bb_lower) / price) * 100, 2)
+    if price >= bb_upper * 0.998:
+        insights.append({
+            "indicator": "Bollinger",
+            "value": f"Upper: {bb_upper:,.0f}",
+            "signal": "bearish",
+            "overlay": "bb",
+            "title": "Harga di Upper Bollinger Band",
+            "text": f"Harga ({price:,.0f}) sentuh upper band ({bb_upper:,.0f}). Biasanya harga akan pullback ke middle band ({ind['bb_middle']:,.0f}).",
+            "tip": "Bollinger upper band bukan auto-sell signal, tapi kalau volume rendah — kemungkinan pullback tinggi.",
+        })
+    elif price <= bb_lower * 1.002:
+        insights.append({
+            "indicator": "Bollinger",
+            "value": f"Lower: {bb_lower:,.0f}",
+            "signal": "bullish",
+            "overlay": "bb",
+            "title": "Harga di Lower Bollinger Band",
+            "text": f"Harga ({price:,.0f}) sentuh lower band ({bb_lower:,.0f}). Mean reversion — harga biasa bounce balik ke tengah ({ind['bb_middle']:,.0f}).",
+            "tip": "Lower band + RSI oversold = strong bounce signal. Tapi confirm dulu dengan volume.",
+        })
+    if bb_width_pct < 2:
+        insights.append({
+            "indicator": "Bollinger",
+            "value": f"Width: {bb_width_pct}%",
+            "signal": "neutral",
+            "overlay": "bb",
+            "title": "Bollinger Squeeze!",
+            "text": f"Bollinger bands dah ketat ({bb_width_pct}% width). Ini macam spring yang dah compress — breakout besar akan datang!",
+            "tip": "Squeeze tak bagitau arah mana. Tunggu candle breakout atas/bawah band, lepas tu follow direction tu.",
+        })
+
+    # ─── Volume ───────────────────────────
+    vol = ind["volume"]
+    avg_vol = ind["avg_volume"]
+    if avg_vol > 0:
+        vol_ratio = round(vol / avg_vol, 2)
+        if vol_ratio >= 2:
+            insights.append({
+                "indicator": "Volume",
+                "value": f"{vol_ratio}x average",
+                "signal": "neutral",
+                "overlay": "ema_9",
+                "title": f"Volume Spike ({vol_ratio}x)",
+                "text": f"Volume sekarang {vol_ratio}x dari average — ada big player masuk. Volume tinggi confirm bahawa move sekarang ada 'tenaga' di belakang.",
+                "tip": "Breakout dengan volume tinggi = real move. Breakout tanpa volume = fake out, biasa trap.",
+            })
+        elif vol_ratio < 0.5:
+            insights.append({
+                "indicator": "Volume",
+                "value": f"{vol_ratio}x average",
+                "signal": "neutral",
+                "overlay": "ema_9",
+                "title": "Volume Sangat Rendah",
+                "text": f"Volume cuma {vol_ratio}x dari average. Market sunyi — pergerakan harga tak reliable.",
+                "tip": "Low volume = jangan trust the move. Tunggu volume masuk baru decide.",
+            })
+
+    # ─── ADX Trend Strength ───────────────
+    adx = ind["adx"]
+    if adx >= 25:
+        insights.append({
+            "indicator": "ADX",
+            "value": adx,
+            "signal": "neutral",
+            "overlay": "ema_50",
+            "title": f"Strong Trend (ADX: {adx})",
+            "text": f"ADX {adx} — market ada strong trend sekarang. ADX atas 25 bermaksud trend tu boleh dipercayai.",
+            "tip": "Dalam strong trend, trade ikut arah trend (trend following). Jangan cuba lawan trend.",
+        })
+    elif adx < 20:
+        insights.append({
+            "indicator": "ADX",
+            "value": adx,
+            "signal": "neutral",
+            "overlay": "ema_50",
+            "title": f"Weak/No Trend (ADX: {adx})",
+            "text": f"ADX {adx} — takde strong trend. Market sideways. Trend following strategy tak berkesan sekarang.",
+            "tip": "Dalam sideways market, guna mean reversion — buy kat support, sell kat resistance.",
+        })
+
+    # ─── Overall Sentiment ────────────────
+    bullish_count = sum(1 for i in insights if i["signal"] == "bullish")
+    bearish_count = sum(1 for i in insights if i["signal"] == "bearish")
+    total = len(insights)
+
+    if bullish_count > bearish_count and bullish_count >= 2:
+        overall = "bullish"
+        summary = f"Majority indicator ({bullish_count}/{total}) tunjuk bullish. Market favor naik."
+    elif bearish_count > bullish_count and bearish_count >= 2:
+        overall = "bearish"
+        summary = f"Majority indicator ({bearish_count}/{total}) tunjuk bearish. Market favor turun."
+    else:
+        overall = "neutral"
+        summary = "Indicator bercampur — takde clear direction. Sabar tunggu confluence."
+
+    return {
+        "price": price,
+        "pair": pair or settings.DEFAULT_PAIR,
+        "timeframe": timeframe or settings.DEFAULT_TIMEFRAME,
+        "overall": overall,
+        "summary": summary,
+        "insights": insights,
+        "indicators": ind,
+    }
+
+
 # ─── Strategies ──────────────────────────────
 
 @router.get("/strategies")
